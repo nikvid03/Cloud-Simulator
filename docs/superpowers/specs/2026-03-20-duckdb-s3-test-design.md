@@ -40,13 +40,15 @@ A single standalone script: `test_s3_duckdb.py`
 - Input: `YYYY-MM-DD` (simulator format)
 - Convert to `DD-MM-YYYY` for S3 folder name
 - Try `stocks_data_DD-MM-YYYY/` first, fall back to `stock_data_DD-MM-YYYY/` (handles naming inconsistency in bucket)
+- If neither path exists: raise `ValueError: No S3 folder found for date YYYY-MM-DD — is it a trading day?`
 
-### 3. FetchDay Test
-Query all CSVs for a date using DuckDB glob:
+### 3. FetchDay Query
+Query all CSVs for a date using a DuckDB glob with **explicit column types** (not `read_csv_auto`) to avoid schema inference failures across 250+ files:
+
 ```sql
 SELECT
     symbol                              AS instrument,
-    exchange_timestamp * 1000           AS ts_ms,
+    CAST(exchange_timestamp AS BIGINT) * 1000  AS ts_ms,
     last_traded_price                   AS ltp,
     last_traded_quantity                AS ltq,
     close_price                         AS cp,
@@ -56,30 +58,62 @@ SELECT
     total_sell_quantity                 AS total_sell_qty,
     last_traded_time                    AS ltt,
     initialOpenInterest                 AS poi,
-    best_bid_price, best_ask_price,
-    best_bid_quantity, best_ask_quantity
-FROM read_csv_auto('s3://.../stocks_data_DD-MM-YYYY/*.csv')
+    best_bid_price,
+    best_ask_price,
+    best_bid_quantity,
+    best_ask_quantity
+FROM read_csv('s3://.../stocks_data_DD-MM-YYYY/*.csv',
+    columns={
+        'symbol': 'VARCHAR',
+        'exchange_timestamp': 'BIGINT',
+        'last_traded_price': 'DOUBLE',
+        'last_traded_quantity': 'BIGINT',
+        'close_price': 'DOUBLE',
+        'currentOpenInterest': 'BIGINT',
+        'average_trade_price': 'DOUBLE',
+        'total_buy_quantity': 'BIGINT',
+        'total_sell_quantity': 'BIGINT',
+        'last_traded_time': 'BIGINT',
+        'initialOpenInterest': 'BIGINT',
+        'best_bid_price': 'DOUBLE',
+        'best_ask_price': 'DOUBLE',
+        'best_bid_quantity': 'BIGINT',
+        'best_ask_quantity': 'BIGINT'
+    }
+)
 ORDER BY exchange_timestamp
 ```
 
-### 4. FetchBatch Test
-Same query with an additional `WHERE exchange_timestamp BETWEEN start AND end` clause. Test window: first 1 hour of the trading day (09:15–10:15 IST).
+Returns a pandas DataFrame via `.df()`.
 
-### 5. Correctness Checks
-- Output is a pandas DataFrame (same type `DBManager` returns)
-- `instrument` column is non-null for all rows
-- DataFrame is sorted ascending by `ts_ms`
-- Row count > 0
-- No rows with `ts_ms = 0` or `ltp = 0` for the full-day fetch (sanity check)
-- `FetchBatch` row count < `FetchDay` row count
+### 4. FetchBatch Query
+Same as FetchDay with an added filter. `start_epoch` and `end_epoch` are accepted in **epoch milliseconds** (matching `RequestWindow` in `Simulator.py`) and divided by 1000 inside the query to compare against `exchange_timestamp` (which is epoch seconds):
+
+```sql
+WHERE exchange_timestamp >= start_epoch_ms / 1000
+  AND exchange_timestamp <= end_epoch_ms / 1000
+```
+
+Test window: 09:15–10:15 IST on the test date, constructed explicitly using `ZoneInfo("Asia/Kolkata")` so the test is timezone-safe across machines.
+
+### 5. Correctness Checks (6 checks)
+1. Output is a pandas DataFrame
+2. `instrument` column is non-null for all rows
+3. DataFrame is sorted ascending by `ts_ms`
+4. Row count > 0
+5. No rows where `ts_ms` is null or zero
+6. `FetchBatch` row count < `FetchDay` row count
+
+Note: `ltp = 0` is **not** checked — deep out-of-the-money illiquid contracts legitimately report zero LTP. Null LTP is checked instead.
 
 ### 6. Benchmark
-Both queries are timed using `time.perf_counter()`. Results printed as:
+Both queries timed with `time.perf_counter()`. Results printed as:
 
 ```
 === DuckDB S3 Test Results ===
 Date tested   : 2024-10-03
 Bucket folder : stocks_data_03-10-2024
+Expected rows : ~1,000,000–2,000,000 (250 instruments × sub-second ticks)
 
 FetchDay
   Rows fetched : 1,234,567
@@ -87,7 +121,7 @@ FetchDay
   Throughput   : 100,045 rows/sec
   Status       : PASS
 
-FetchBatch (09:15–10:15)
+FetchBatch (09:15–10:15 IST)
   Rows fetched : 123,456
   Time         : 3.21s
   Throughput   : 38,459 rows/sec
@@ -100,23 +134,34 @@ Overall: PASS
 
 ## Column Mapping
 
-| CSV column             | Simulator column  |
-|------------------------|-------------------|
-| `symbol`               | `instrument`      |
-| `exchange_timestamp * 1000` | `ts_ms`      |
-| `last_traded_price`    | `ltp`             |
-| `last_traded_quantity` | `ltq`             |
-| `close_price`          | `cp`              |
-| `currentOpenInterest`  | `oi`              |
-| `average_trade_price`  | `atp`             |
-| `total_buy_quantity`   | `total_buy_qty`   |
-| `total_sell_quantity`  | `total_sell_qty`  |
-| `last_traded_time`     | `ltt`             |
-| `initialOpenInterest`  | `poi`             |
+| CSV column                  | Simulator column  | Notes                          |
+|-----------------------------|-------------------|--------------------------------|
+| `symbol`                    | `instrument`      |                                |
+| `exchange_timestamp * 1000` | `ts_ms`           | CSV is epoch-seconds; output is epoch-ms |
+| `last_traded_price`         | `ltp`             |                                |
+| `last_traded_quantity`      | `ltq`             |                                |
+| `close_price`               | `cp`              |                                |
+| `currentOpenInterest`       | `oi`              |                                |
+| `average_trade_price`       | `atp`             |                                |
+| `total_buy_quantity`        | `total_buy_qty`   |                                |
+| `total_sell_quantity`       | `total_sell_qty`  |                                |
+| `last_traded_time`          | `ltt`             |                                |
+| `initialOpenInterest`       | `poi`             |                                |
 
 Columns not in RDS schema (kept as-is): `best_bid_price`, `best_ask_price`, `best_bid_quantity`, `best_ask_quantity`, `high_price`, `low_price`, `open_price`, `trade_volume`.
 
-Columns not in CSV (absent from S3 data): `iv`, `delta`, `theta`, `gamma`, `vega` — already confirmed NULL in RDS too, so no regression.
+---
+
+## Known Gaps vs. `__convert_to_upstox`
+
+These columns are read by `Simulator.py:__convert_to_upstox` but are absent from S3 CSV data. They are out of scope for this test but must be resolved before building the full `S3Manager`:
+
+| Column      | Used in simulator | S3 CSV | Agreed handling |
+|-------------|-------------------|--------|-----------------|
+| `ts`        | `data["ts"]` (line 229) — simulator variable named `ts_ms`, reads key `"ts"` | absent | The test script outputs `ts_ms`; future `S3Manager` must reconcile this key name with the simulator |
+| `up`        | `data["up"]` (underlying price, line 259) | absent | Will be `None` — same as RDS where this appears to be unpopulated |
+| `indexLtp`  | `data["indexLtp"]` (line 235, index path only) | absent | Index instruments are not present in the S3 CSVs (options only); handled separately |
+| `iv`, `delta`, `theta`, `gamma`, `vega` | read in options path | absent | Already NULL in RDS; not a regression |
 
 ---
 
@@ -135,8 +180,8 @@ pandas
 | Criterion | Pass condition |
 |---|---|
 | S3 connectivity | DuckDB connects and reads without auth errors |
-| Correctness | All 5 correctness checks pass |
-| FetchDay performance | < 60s for a full trading day (~250 CSVs) |
+| Correctness | All 6 correctness checks pass |
+| FetchDay performance | < 60s for a full trading day (~250 CSVs, ~1–2M rows) |
 | FetchBatch performance | < 15s for a 1-hour window |
 
 If all pass → proceed to build `S3Manager` as a drop-in replacement for `DBManager`.
