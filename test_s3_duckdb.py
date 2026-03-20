@@ -197,7 +197,7 @@ def run_correctness_checks(full_df: pd.DataFrame, batch_df: pd.DataFrame) -> Lis
     # b) batch count >= full count — wrong regardless of empty
     if not full_df.empty and batch_df.empty:
         errors.append("batch returned 0 rows against a non-empty full day")
-    elif len(batch_df) >= len(full_df):
+    elif not full_df.empty and len(batch_df) >= len(full_df):
         errors.append(
             f"batch row count ({len(batch_df)}) >= full day ({len(full_df)})"
         )

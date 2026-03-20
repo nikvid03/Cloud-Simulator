@@ -42,6 +42,18 @@ def test_resolve_returns_stocks_variant_first():
     assert mock_conn.execute.call_count == 1
 
 
+def test_resolve_returns_stock_fallback_variant():
+    """stocks_data_ variant returns 0 files; falls back to stock_data_ (without 's')."""
+    mock_conn = MagicMock()
+    # First call (stocks_data_) returns 0, second call (stock_data_) returns 10
+    mock_conn.execute.return_value.fetchone.side_effect = [(0,), (10,)]
+    with patch("test_s3_duckdb._make_conn", return_value=mock_conn):
+        result = _resolve_s3_glob("2024-10-03")
+    assert "stock_data_03-10-2024" in result
+    assert result.endswith("*.csv")
+    assert mock_conn.execute.call_count == 2
+
+
 # Full 15-column schema matching the simulator output
 _ALL_COLS = [
     "instrument", "ts_ms", "ltp", "ltq", "cp", "oi", "atp",
@@ -87,6 +99,7 @@ def test_checks_fail_on_null_instrument():
 
 def test_checks_fail_on_empty_df():
     errors = run_correctness_checks(_make_df([]), _make_df([]))
+    assert len(errors) == 1
     assert any("empty" in e.lower() for e in errors)
 
 
