@@ -25,8 +25,7 @@ class DBManager:
     def FetchDay(self, date: str):
         """Fetch entire day's data ordered by timestamp."""
         query = f"""
-            SELECT *,
-                (extract(epoch from ts::timestamp) * 1000)::bigint as ts_ms
+            SELECT *, ts AS ts_ms
             FROM datafeedschema.{self.table_name}
             WHERE tickd = %(tickd)s
             ORDER BY ts
@@ -38,7 +37,7 @@ class DBManager:
         """Fetch ticks for date within [start_epoch, end_epoch]."""
         logger.info("Fetching %s epoch %d-%d", date, start_epoch, end_epoch)
         query = f"""
-            SELECT * FROM datafeedschema.{self.table_name}
+            SELECT *, ts AS ts_ms FROM datafeedschema.{self.table_name}
             WHERE tickd = %(tickd)s
               AND ts >= %(start_epoch)s
               AND ts <= %(end_epoch)s
