@@ -99,3 +99,20 @@ def test_top10_instruments_capped(capsys):
     # The top-5 by count must always appear
     for i in range(5):
         assert f"NSE_FO|INSTR_{i:02d}" in out
+
+
+# ── DataQueue integration ─────────────────────────────────────────────────────
+
+def test_data_queue_records_stale_drop_non_batch():
+    """DataQueue.put records stale drops via tracker in non-batch mode."""
+    from Simulator import DataQueue
+
+    tracker = DataLossTracker()
+    q = DataQueue()
+    # start_ts=1727927200000 (09:16:40 IST); packet at 09:15 IST is stale
+    q.start(batch_size=None, start_ts=1727927200000, tracker=tracker)
+    q.put({"currentTs": 1727927100000, "feeds": {"NSE_FO|NIFTY CE": {}}})
+
+    assert tracker._stale_total == 1
+    assert tracker._stale_by_instrument["NSE_FO|NIFTY CE"] == 1
+    assert tracker._stale_by_window["09:00"] == 1

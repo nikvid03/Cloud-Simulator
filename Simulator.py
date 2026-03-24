@@ -6,6 +6,7 @@ import json
 import zmq
 import pandas as pd
 from DBManager import DBManager
+from DataLossTracker import DataLossTracker
 from typing import List
 from dataclasses import dataclass
 
@@ -40,10 +41,14 @@ class DataQueue:
     def __init__(self):
         self.vQueue = queue.Queue(maxsize=5000)
         self.vCurrDataArray = []
+        self.tracker = None
 
     def put(self, pDataPacket):
         if self.vBatchSize:
             if pDataPacket["currentTs"] <= (self.vNextTs - self.vBatchSize):
+                if self.tracker:
+                    instrument = next(iter(pDataPacket["feeds"]), "UNKNOWN")
+                    self.tracker.record_stale_drop(instrument, pDataPacket["currentTs"])
                 return  # stale, drop
 
             while pDataPacket["currentTs"] > (self.vNextTs - self.vBatchSize):
@@ -58,6 +63,9 @@ class DataQueue:
 
         else:
             if pDataPacket["currentTs"] < self.vNextTs:
+                if self.tracker:
+                    instrument = next(iter(pDataPacket["feeds"]), "UNKNOWN")
+                    self.tracker.record_stale_drop(instrument, pDataPacket["currentTs"])
                 return  # stale, drop
 
             if len(self.vCurrDataArray):
@@ -73,10 +81,11 @@ class DataQueue:
 
             self.vNextTs = pDataPacket["currentTs"]
 
-    def start(self, batch_size=None, start_ts=None):
+    def start(self, batch_size=None, start_ts=None, tracker=None):
         self.vCurrDataArray = []
         self.vBatchSize = batch_size
         self.vNextTs = start_ts
+        self.tracker = tracker
 
     def end(self):
         """Flush any remaining accumulated ticks."""
@@ -117,6 +126,7 @@ class Simulator:
         self.vSimStartTime = None
         self.vSpeed = pSimConfig.uSpeed
         self.vFetchDone = threading.Event()
+        self.vTracker = DataLossTracker()
         self.zmq_context = zmq.Context()
         self.push_socket = self.zmq_context.socket(zmq.PUSH)
         self.push_socket.connect(pSimConfig.uTargetAddress)
@@ -132,12 +142,17 @@ class Simulator:
         try:
             for req_obj in self.vSimConfig.uReqData:
                 start_ts = req_obj.start_time
-                self.vDataQueue.start(self.vSimConfig.uBatch, start_ts)
+                self.vDataQueue.start(self.vSimConfig.uBatch, start_ts, tracker=self.vTracker)
 
                 while start_ts < req_obj.end_time:
                     end_ts = min(req_obj.end_time, start_ts + self.DB_FETCH_BATCH_MS)
                     df = self.__fetch_with_retry(req_obj.date, start_ts, end_ts)
                     if self.vSimConfig.uInstruments and not df.empty:
+                        dropped = df[~df["instrument"].isin(self.vSimConfig.uInstruments)]
+                        for _, row in dropped.iterrows():
+                            # FetchBatch returns `ts` column; FetchDay aliases it as `ts_ms`. Handle both.
+                            ts = int(row.get("ts_ms", row.get("ts", 0)))
+                            self.vTracker.record_filter_drop(str(row["instrument"]), ts)
                         df = df[df["instrument"].isin(self.vSimConfig.uInstruments)]
                     logger.info("Fetched %d rows for %d-%d", len(df), start_ts, end_ts)
                     for _, row in df.iterrows():
@@ -164,6 +179,7 @@ class Simulator:
                         "Skipping chunk %d-%d after %d failures",
                         start_ts, end_ts, self.MAX_FETCH_RETRIES
                     )
+                    self.vTracker.record_failed_chunk(date, start_ts, end_ts)
                     return pd.DataFrame()
                 time.sleep(2 ** attempt)
 
@@ -173,6 +189,7 @@ class Simulator:
             if data is None:
                 if self.vFetchDone.is_set():
                     logger.info("Fetch complete and queue drained. Sender exiting.")
+                    self.vTracker.print_summary()
                     break
                 continue  # fetch still in progress, keep waiting
 
@@ -226,8 +243,8 @@ class Simulator:
             logger.error("Failed to send over ZMQ: %s", e, exc_info=True)
 
     def __convert_to_upstox(self, data):
-        ts_ms = int(data["ts"])
-        if data["instrument"] == "NSE_INDEX|Nifty 50":
+        ts_ms = int(data["ts_ms"])
+        if str(data["instrument"]).startswith("NSE_INDEX|"):
             return {
                 "feeds": {
                     data["instrument"]: {
