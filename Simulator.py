@@ -115,7 +115,7 @@ class DataQueue:
 
 
 class Simulator:
-    DB_FETCH_BATCH_MS = 1800000  # 30 minutes
+    DB_FETCH_BATCH_MS = 600000  # 10 minutes
     MAX_FETCH_RETRIES = 3
 
     def __init__(self, pSimConfig: SimulatorConfigs, pDbConfig: DbConfigs):

@@ -16,7 +16,7 @@ class DBManager:
             connection_string,
             connect_args={
                 "connect_timeout": 30,
-                "options": "-c statement_timeout=120000"  # 2 min query timeout (large tick batches over remote RDS)
+                "options": "-c statement_timeout=600000"  # 10 min query timeout (large tick batches over remote RDS)
             },
             pool_pre_ping=True  # health-check connections before use
         )
