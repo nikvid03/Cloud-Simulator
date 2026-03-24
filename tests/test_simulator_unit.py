@@ -32,7 +32,7 @@ def sim():
 def make_index_row():
     return {
         "instrument": "NSE_INDEX|Nifty 50",
-        "ts": 1000,
+        "ts_ms": 1000,
         "indexLtp": 22000.5,
         "ltt": "09:15:00",
         "cp": 21900.0,
@@ -42,7 +42,7 @@ def make_index_row():
 def make_options_row():
     return {
         "instrument": "NSE_OPT|NIFTY25JAN22000CE",
-        "ts": 2000,
+        "ts_ms": 2000,
         "ltp": 150.0,
         "ltt": "09:15:01",
         "ltq": 5,

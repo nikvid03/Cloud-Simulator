@@ -168,11 +168,14 @@ class Simulator:
             self.vFetchDone.set()
             logger.info("Fetch loop complete")
 
+    _TUNNEL_DOWN_MARKERS = ("Connection refused", "SSL SYSCALL", "could not connect")
+
     def __fetch_with_retry(self, date, start_ts, end_ts):
         for attempt in range(self.MAX_FETCH_RETRIES):
             try:
                 return self.vDbManager.FetchBatch(date, start_ts, end_ts)
             except Exception as e:
+                err = str(e)
                 logger.warning("FetchBatch attempt %d failed: %s", attempt + 1, e)
                 if attempt == self.MAX_FETCH_RETRIES - 1:
                     logger.error(
@@ -181,7 +184,14 @@ class Simulator:
                     )
                     self.vTracker.record_failed_chunk(date, start_ts, end_ts)
                     return pd.DataFrame()
-                time.sleep(2 ** attempt)
+                if any(m in err for m in self._TUNNEL_DOWN_MARKERS):
+                    logger.warning(
+                        "Tunnel appears down — recycling connection pool, waiting 30s for recovery"
+                    )
+                    self.vDbManager.engine.dispose()
+                    time.sleep(30)
+                else:
+                    time.sleep(2 ** attempt)
 
     def __sender_loop(self):
         while True:

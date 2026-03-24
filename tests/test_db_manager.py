@@ -66,8 +66,10 @@ def test_connect_args_set(db):
     _, mock_engine = db
     _, kwargs = mock_engine.call_args
     connect_args = kwargs.get("connect_args", {})
-    assert connect_args.get("connect_timeout") == 10
-    assert connect_args.get("options") == "-c statement_timeout=30000"
+    assert connect_args.get("connect_timeout") == 30
+    assert connect_args.get("options") == "-c statement_timeout=600000"
+    assert connect_args.get("keepalives") == 1
+    assert connect_args.get("keepalives_idle") == 30
 
 
 def test_table_name_from_env(db):

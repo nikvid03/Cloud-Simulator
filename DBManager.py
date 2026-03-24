@@ -16,7 +16,11 @@ class DBManager:
             connection_string,
             connect_args={
                 "connect_timeout": 30,
-                "options": "-c statement_timeout=600000"  # 10 min query timeout (large tick batches over remote RDS)
+                "options": "-c statement_timeout=600000",  # 10 min query timeout (large tick batches over remote RDS)
+                "keepalives": 1,          # enable TCP keepalives — keeps SSH tunnel alive between fetch batches
+                "keepalives_idle": 30,    # start probing after 30s of silence
+                "keepalives_interval": 10,# probe every 10s thereafter
+                "keepalives_count": 5,    # drop connection after 5 missed probes
             },
             pool_pre_ping=True  # health-check connections before use
         )
