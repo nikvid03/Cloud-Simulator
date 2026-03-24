@@ -138,6 +138,10 @@ class Simulator:
         fetch_thread.start()
         sender_thread.start()
 
+    def print_summary(self):
+        """Print data loss summary — called on both natural completion and CTRL+C."""
+        self.vTracker.print_summary()
+
     def __fetch_loop(self):
         try:
             for req_obj in self.vSimConfig.uReqData:

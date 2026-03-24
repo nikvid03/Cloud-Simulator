@@ -41,6 +41,7 @@ def main():
 
     def shutdown(sig, frame):
         logger.info("Shutting down gracefully.")
+        simulator.print_summary()
         distributor.stop()
 
     signal.signal(signal.SIGINT, shutdown)
