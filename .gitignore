@@ -1,0 +1,10 @@
+__pycache__/
+*.pyc
+myenv/
+.venv/
+.env
+logs/
+.pytest_cache/
+.claude/
+.DS_Store
+nifty_data_*/
